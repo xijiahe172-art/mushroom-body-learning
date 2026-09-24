@@ -21,11 +21,13 @@ failure: a missing interpreter, a corrupt store, a retrieval error, or any
 internal exception is logged and dropped, and the agent keeps working.
 
 **It is not** a simulation of the fruit-fly nervous system. Nothing here models
-neurons, synapses, or the mushroom body's anatomy. The inspiration is one
-abstract idea from that literature — that behaviour can be shaped by associating
-states with outcomes, without any model of the world — and this project is an
-engineering implementation of that idea for an agent loop. If you came looking
-for a spiking-network model or a connectome, this is not it.
+neurons, synapses, or the mushroom body's anatomy. (The structure this borrows
+from is the fly's mushroom body, 蘑菇体 — a single brain region, not "mushroom" +
+"body".) The inspiration is one abstract idea from that literature — that
+behaviour can be shaped by associating states with outcomes, without any model of
+the world — and this project is an engineering implementation of that idea for an
+agent loop. If you came looking for a spiking-network model or a connectome, this
+is not it.
 
 ## Current status: validated, but not yet proven effective
 
