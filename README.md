@@ -51,8 +51,8 @@ arms (`off`, `off-repeat`, `shadow`, `active`, 64 real runs), found:
 
 So the mechanism is implemented and safe, but **it has not been shown to pay for
 itself.** The full data, including the sampling-noise floor and the per-task
-tables, is in [`PHASE5_BENCHMARK.md`](PHASE5_BENCHMARK.md), and the five-phase
-summary with the recommendation is in [`FINAL_REPORT.md`](FINAL_REPORT.md). Two
+tables, is in [`PHASE5_BENCHMARK.md`](learning_module/PHASE5_BENCHMARK.md), and the five-phase
+summary with the recommendation is in [`FINAL_REPORT.md`](learning_module/FINAL_REPORT.md). Two
 known design defects found during validation are documented there as well: the
 retriever keys on the failure kind alone (so one action can appear in both the
 "successful" and "avoid" groups of the same block), and the reward measures
@@ -144,11 +144,34 @@ caveats.
 
 | File | Contents |
 | --- | --- |
-| [`MODULE.md`](MODULE.md) | The module's own reference: schema, retrieval and value formulas, the injected format, and the anti-cheating rules. |
-| [`FINAL_REPORT.md`](FINAL_REPORT.md) | Five-phase summary: per-phase test results, benchmark data, and the recommendation on enabling `active`. |
-| [`PHASE3_ACCEPTANCE.md`](PHASE3_ACCEPTANCE.md) | What injection actually looked like in ten real active-mode sessions. |
-| [`PHASE4_ACCEPTANCE.md`](PHASE4_ACCEPTANCE.md) | The anti-cheating layer, its acceptance criteria, and the defects found while building it. |
-| [`PHASE5_BENCHMARK.md`](PHASE5_BENCHMARK.md) | The 64-run benchmark: six metrics per arm, the noise floor, and per-task tables. |
+| [`MODULE.md`](learning_module/MODULE.md) | The module's own reference: schema, retrieval and value formulas, the injected format, and the anti-cheating rules. |
+| [`FINAL_REPORT.md`](learning_module/FINAL_REPORT.md) | Five-phase summary: per-phase test results, benchmark data, and the recommendation on enabling `active`. |
+| [`PHASE3_ACCEPTANCE.md`](learning_module/PHASE3_ACCEPTANCE.md) | What injection actually looked like in ten real active-mode sessions. |
+| [`PHASE4_ACCEPTANCE.md`](learning_module/PHASE4_ACCEPTANCE.md) | The anti-cheating layer, its acceptance criteria, and the defects found while building it. |
+| [`PHASE5_BENCHMARK.md`](learning_module/PHASE5_BENCHMARK.md) | The 64-run benchmark: six metrics per arm, the noise floor, and per-task tables. |
+
+## Contributors
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/xijiahe172-art"><img src="https://github.com/xijiahe172-art.png" width="90" alt="Jay" /></a><br />
+      <b>Jay</b><br />
+      <a href="https://github.com/xijiahe172-art">@xijiahe172-art</a><br />
+      <sub>Author · design, implementation, validation</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/Liztide-071"><img src="https://github.com/Liztide-071.png" width="90" alt="Liztide-071" /></a><br />
+      <b>Liztide-071</b><br />
+      <a href="https://github.com/Liztide-071">@Liztide-071</a><br />
+      <sub>Contributor</sub>
+    </td>
+  </tr>
+</table>
+
+**AI collaboration**: the architecture review and the specification design were
+worked out with Claude (Anthropic). Claude did not write the shipped code, so it
+is credited here as a collaboration rather than listed among the code's authors.
 
 ## License
 
