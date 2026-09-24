@@ -154,10 +154,41 @@ the action category — never the internal endowment-weighted score, and never
 
 `value.py` owns the fixed constants: `alpha = 0.3`, `lambda = 2.5`, a 30-day
 half-life, and the confidence schedule
-`min(0.9, 0.15 * min(total, 6)) * max(2 * |success_rate - 0.5|, 0.2)`. The value
-update is loss-averse: a reward below the stored value moves the value
-`alpha * lambda` of the way, and a first observation always uses the base rate
-because it has no expectation to fall short of.
+`min(0.9, 0.15 * min(total, 6)) * max(2 * |success_rate - 0.5|, 0.2)`.
+
+## Value update: loss aversion
+
+The update is asymmetric on purpose, because a plain average does not make an
+agent avoid anything. A path that failed repeatedly but succeeded once can hold a
+respectable mean and keep being recommended; an agent that steers by the mean
+never learns "do not do that here". The value therefore reacts harder to a result
+below the stored expectation than to one above it:
+
+```
+new_value = old_value + alpha_eff * (reward - old_value)
+
+alpha_eff = alpha * lambda   when the pair has history and reward < old_value
+alpha_eff = alpha            otherwise
+
+alpha = 0.3      lambda = 2.5
+```
+
+Two properties follow:
+
+- a first observation always uses the base rate, because it has no expectation to
+  fall short of — an unknown action is not punished for being unknown;
+- from the second observation on, a below-expectation result pulls the value down
+  `2.5x` as hard, so one failure takes several successes to offset.
+
+Worked effect, from a stored value of `0.6` receiving a `-0.8` observation:
+
+| Update | Resulting value | Where that leaves the row |
+| --- | --- | --- |
+| Loss-averse (`lambda = 2.5`) | `-0.45` | negative, so the next render files it under "approaches to avoid" |
+| Symmetric EMA (`lambda = 1`) | `+0.18` | still positive, so the next render offers it as "successful approach" |
+
+The same evidence lands in opposite groups, which is the whole point of the
+chapter: `lambda` is what turns recorded outcomes into an avoidance tendency.
 
 ## Stored value
 

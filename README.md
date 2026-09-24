@@ -1,161 +1,395 @@
-# Mushroom Body Learning Module
+# 蘑菇体学习模块 — Agent 经验学习层
 
-Experience-based learning for coding agents: an optional module that lets an agent
-form a behavioural tendency — "what is worth trying here" — from its own past
-steps, instead of starting every task from zero.
+> **一句话**：给 Coding Agent 加一层「项目专属经验」，让它别再重复踩同一个坑。
+>
+> 灵感来自果蝇大脑的蘑菇体（Mushroom Body）；**不是生物仿真**，只借鉴其顶层逻辑。
 
-The loop it implements:
+---
+
+## 一、模块定位与核心问题
+
+### 1.1 核心问题
+
+现有 LLM Coding Agent 有一个结构性的"无状态"缺陷：每一次任务、每一轮推理都是独立会话，模型只依赖当次上下文决策。它**记不住**项目历史上的坑点、错误模式、以及哪些做法真的管用。
+
+直接后果：Agent 在同一个项目里反复犯同类错误（固定的库用法、固定的配置路径、固定的报错处理误区），需要人反复提醒、反复纠正，既浪费精力，也无法自迭代。
+
+### 1.2 模块目标
+
+把「任务执行记录、动作结果、对错经验、行为倾向」从人工记忆迁移到**自动化、持久化、可迭代**的机器经验系统，让 Agent 越用越贴合当前项目、越用越少重复踩坑。
+
+### 1.3 本仓库是什么
+
+一个**零第三方依赖**的 Python 模块（存储用 SQLite）：观测 Agent 主循环的两个点位，推理前抽取结构化状态、执行后自动评估 Reward，沉淀为经验，并在 `active` 模式下把一小段带标注的参考文本注入回提示词。
+
+---
+
+## 二、设计灵感与边界声明
+
+### 2.1 灵感来源
+
+果蝇大脑 **蘑菇体（Mushroom Body，蘑菇体）** 的联想式条件学习机制：
 
 ```
-State → Action → Reward → Experience → Value Update → Retrieval → (next State)
+刺激状态 + 奖惩信号  →  形成趋近 / 回避行为倾向，并持续修正
 ```
 
-## What it is, and what it is not
+`蘑菇体` 是果蝇脑内负责该功能的一个脑区——它是一整个结构，不是"蘑菇"加"身体"。
 
-**It is** a small, dependency-free Python module (with SQLite for storage) that
-observes an agent loop at two instrumentation points, derives a structural state
-before each model call and an evaluated reward after each settled action, stores
-that as experience, and — in `active` mode — injects a labelled, budgeted
-reference block back into the prompt. It is built to never be a single point of
-failure: a missing interpreter, a corrupt store, a retrieval error, or any
-internal exception is logged and dropped, and the agent keeps working.
+### 2.2 严格边界声明
 
-**It is not** a simulation of the fruit-fly nervous system. Nothing here models
-neurons, synapses, or the mushroom body's anatomy. (The structure this borrows
-from is the fly's mushroom body, 蘑菇体 — a single brain region, not "mushroom" +
-"body".) The inspiration is one abstract idea from that literature — that
-behaviour can be shaped by associating states with outcomes, without any model of
-the world — and this project is an engineering implementation of that idea for an
-agent loop. If you came looking for a spiking-network model or a connectome, this
-is not it.
+- **不做**生物仿真：不实现神经细胞、不模拟多巴胺传导、不是神经网络。
+- 只借鉴**顶层逻辑**：
 
-## Current status: validated, but not yet proven effective
+```
+状态 → 动作 → 结果 → 奖惩  ⇒  沉淀经验、修正未来行为倾向
+```
 
-Be clear about what is and is not established.
+- 实际工程实现是 **检索增强 + 轻量统计经验迭代**——不是生物模型，**也不是标准强化学习**。
 
-| Claim | Status |
+---
+
+## 三、整体工作流程
+
+### 3.1 完整闭环
+
+```
+Agent 进入当前任务状态
+        ↓
+经验模块检索相似历史状态（按失败类型精确匹配，不足时放宽到相邻类型）
+        ↓
+高置信经验轻量化注入 LLM 上下文（仅作参考）
+        ↓
+LLM 自主规划、执行动作
+        ↓
+环境返回执行结果
+        ↓
+独立评估器自动计算 Reward（完全无 LLM 自评）
+        ↓
+损失厌恶 EMA 更新该 (状态, 动作) 的价值分数
+        ↓
+时间衰减 + 置信度重算 → 沉淀为新经验
+```
+
+### 3.2 运行示例
+
+```
+Agent 首次遇到 FileNotFoundError
+  动作：直接重跑程序            → 失败   Reward −0.65
+第二次同类报错
+  动作：检查路径与堆栈          → 成功   Reward +0.82
+```
+
+系统自动沉淀（表中"价值"是排名真正使用的量，不是算术平均）：
+
+| 状态 | 动作 | 本次 Reward | 价值（EMA） | 置信度 |
+| --- | --- | --- | --- | --- |
+| FileNotFoundError | 直接重跑 | −0.65 | 偏低 | 0.40 |
+| FileNotFoundError | 检查路径与堆栈 | +0.82 | 偏高 | 0.62 |
+
+下次同类场景自动注入参考文本：
+
+```
+[Historical Experience — Reference Only]
+相似状态历史出现 4 次
+有效动作：检查 traceback 和文件路径
+历史平均 Reward: +0.82
+Confidence: 0.62
+注意：经验仅供参考，模型自主判断
+```
+
+### 3.3 核心原则
+
+**经验永远是参考**，绝不锁死模型决策，也不生成硬编码规则。注入文本自带三处声明：标题里的 `Reference Only`、分组的 `✅ 可参考` / `⚠️ 避免`、以及结尾的"仅供参考，独立判断"。
+
+---
+
+## 四、为什么不使用传统强化学习
+
+标准 RL（Q-Learning、PPO、Actor-Critic）不适用于 Coding Agent：
+
+| 原因 | 说明 |
 | --- | --- |
-| The module never breaks an agent turn (SQLite down, retriever error, encoder error, budget overflow) | **Verified.** Every failure path returns "no injection" and logs. |
-| Recording experience has no side effect on decisions (`shadow` mode) | **Verified.** Off vs shadow differ no more than two `off` runs differ from each other. |
-| Anti-cheating works (rewarding an agent for editing the tests) | **Verified.** Test-file edits that pass are discounted and flagged for review. |
-| Injection respects a hard token budget | **Verified**, measured with the harness's own pricing (a 4-characters/token estimate, not an exact tokenizer). |
-| **It reduces repeated mistakes** | **Not demonstrated.** |
+| 状态空间无限、语义模糊 | 代码错误与任务状态由自然语言 + 代码构成，不可枚举、不可标准化 |
+| 样本极度稀疏 | 单次任务里同类错误通常只出现 1~2 次，无法满足 RL 收敛所需的重复采样 |
+| 不可替代 LLM 主策略 | 最终决策者永远是 LLM，不需要训练独立策略网络来取代它 |
 
-That last row is the honest headline. A 16-task fixed benchmark, run across four
-arms (`off`, `off-repeat`, `shadow`, `active`, 64 real runs), found:
+---
 
-- task success rate: 100% in every arm (the tasks are small; there is a ceiling);
-- repeated-mistake rate: **84.4% → 83.3%** (1.2% relative improvement, against a
-  10% bar) with the fixture's own seeded failure included, and **68.8% → 78.6%**
-  (14.3% *worse*) counting only the model's own steps;
-- mean tokens: **1.9% higher** with the module active;
-- recovery speed: slightly slower.
+## 五、价值更新与损失厌恶（本模块真正回避坑的引擎）
 
-So the mechanism is implemented and safe, but **it has not been shown to pay for
-itself.** The full data, including the sampling-noise floor and the per-task
-tables, is in [`PHASE5_BENCHMARK.md`](learning_module/PHASE5_BENCHMARK.md), and the five-phase
-summary with the recommendation is in [`FINAL_REPORT.md`](learning_module/FINAL_REPORT.md). Two
-known design defects found during validation are documented there as well: the
-retriever keys on the failure kind alone (so one action can appear in both the
-"successful" and "avoid" groups of the same block), and the reward measures
-whether a step advanced the task rather than whether the action was sensible (so
-running the tests to observe a failure is scored negative).
+这是设计文档初稿里漏掉的一章，也是本模块与"简单记录平均分"最关键的区别。
 
-**Default is `off`.** `shadow` mode is safe to enable for data collection: it
-records experience and never influences a decision.
+**只按平均分学习，Agent 不会主动回避失败路径。** 一条失败路径只要历史上偶然成功过一次，均分就可能被抬高，于是它看起来"还行"，下次还会被推荐。因此价值更新采用**非对称（损失厌恶）EMA**：
 
-## Quick start
+```
+new_value = old_value + α_eff × (reward − old_value)
 
-Requires Python 3.11+ (standard library only) and SQLite. No third-party
-packages, no network access.
+α_eff = α × λ   当 reward < old_value（有历史时）
+α_eff = α        其他情况
+
+α = 0.3      λ = 2.5
+```
+
+含义：
+
+- **第一次观测没有可落空的预期**，因此一定走基础速率（不惩罚"未知"）。
+- 从第二次起，**低于既有价值的结果按 2.5 倍力度下拉**——一次失败要很多次成功才能抵消。
+- 结果是"这次别再这么干"这类倾向会被**快速固化**，这正是"自动避坑"所需的方向性。
+
+实测影响（旧价值 0.6，来一个 −0.8 的观测）：
+
+```
+损失厌恶  →  价值跌到 −0.45
+若按对称 EMA（λ=1）  →  只能跌到 0.18
+```
+
+同一份负面证据，前者足以把它压到负值区（下次进入"避免"分组），后者仍停留在正值区（仍会被当成"可参考"）。这个差距就是这一章存在的理由。
+
+代码位置：`learning_module/value.py` 的 `update_value()`；双常量 `ALPHA`、`LAMBDA` 与其余参数一并冻结，未经明确授权不得调参。
+
+---
+
+## 六、Reward 奖惩机制（核心引擎）
+
+### 6.1 打分原则
+
+- 全自动、无人工干预；
+- **禁止决策 LLM 自评**（彻底隔离，防止主观偏差）；
+- 多层客观优先级判定。
+
+### 6.2 判定优先级（由高到低）
+
+| 优先级 | 依据 | 例 |
+| --- | --- | --- |
+| 1. 确定性客观结果 | 工具实际报告了什么 | 编译成败、测试套件 Pass/Fail、报错是否消失 |
+| 2. 环境状态对比 | 前后结构化状态差异 | 原有问题是否缓解、是否引入新问题 |
+| 3. 兜底静态规则 | 行为层面的明显异常 | 乱改无关文件、无效重复、单步调用过多 |
+
+第 3 层是**惩罚**而非主判据，且合并后**封顶 −0.1**，保证它永远无法压过第 1 层的正确性结论。
+
+### 6.3 Reward 分数档位
+
+| 档位 | 值 |
+| --- | --- |
+| 完全解决 | +1.0 |
+| 明显改善 | +0.6 |
+| 小幅改善 | +0.2 |
+| 无变化 | 0 |
+| 无效操作 | −0.3 |
+| 问题恶化 | −0.8 |
+| 严重破坏性错误 | −1.0 |
+
+### 6.4 防作弊（Reward Hacking）
+
+针对"为了过测试而改测试"这类投机行为，本模块不靠信任，靠留痕：
+
+| 规则 | 触发条件 | 后果 |
+| --- | --- | --- |
+| 测试篡改 | 改了测试文件 / 校验文件，**且测试随即通过** | Reward **× 0.3**，并标记 `test_tampering` |
+| 异常满分 | Reward > 0.8 且改动行数 < 3（且未动测试） | 标记 `small_change_high_reward`，**不打折、不阻断** |
+
+两条刻意的不对称：
+
+- **负分永不"打折"**：改了测试仍然失败时保持原值，否则会把失败粉饰成"没那么差"；
+- **标记永不断行**：可疑样本进入人工审计队列（`python cli.py flagged`），但不会把经验从检索中移除。
+
+不追求绝对杜绝作弊，只保证**可疑行为必留痕、可控、可审计**。
+
+---
+
+## 七、记忆、衰减、置信度、防爆炸
+
+### 7.1 双层存储隔离
+
+| 层 | 内容 | 约束 |
+| --- | --- | --- |
+| 底层数据库（SQLite） | 永久保存全部经验日志，用于审计、统计、复盘；体积极小（数万条仅 MB 级） | 无上限 |
+| 决策层上下文 | 真正影响模型推理的内容 | **严格限死**（见 7.2） |
+
+### 7.2 Token 硬上限（核心防爆炸）
+
+每轮注入严格受限：
+
+- 最多 **3 条**有效经验；
+- 单条 **≤ 50 Token**；
+- 总量 **≤ 200 Token**。
+
+超限的处理是**丢弃整条**，而不是截断成半个数字；若一条都放不下，就整块不注入。**永远不会出现上下文无限膨胀。**
+
+> 计价口径说明：Token 以本项目自身的 `dsh-token-meter` 计价（**4 字符 ≈ 1 Token 的估算**），**不是** DeepSeek 官方 tokenizer 的精确计数——仓库内不存在精确分词器。真实流量实测 35 个注入块为 119–143 Token，最差 143，未触及 200 上限。
+
+### 7.3 时间衰减（自动淘汰过时经验）
+
+```
+decay_factor = exp(−ln2 × 间隔天数 / 30)
+```
+
+- **30 天半衰期**：满 30 天恰好衰减到 0.5；
+- 长期未复现的旧经验，可信度持续下降；
+- 衰减到阈值以下**自动静默、不参与决策**（数据保留、不删除）；
+- 保证经验始终贴合项目现状，不用过时认知误导模型。
+
+> ⚠️ 与设计初稿的差异：初稿写作 `exp(−间隔天数/30)` 并称其为"30 天半衰期"。该式在 30 天只有 0.368，实为"约 1/3 衰期"，名不副实。**实现采用带 `ln2` 的版本**，以保证"半衰期"名副其实。此处记录差异，不擅自改回。
+
+### 7.4 置信度算法（区分稳定 / 摇摆经验）
+
+同时考虑**成功率、稳定性、样本量**：
+
+```
+success_rate = 成功次数 / 总次数
+stability    = 2 × |success_rate − 0.5|
+base         = min(0.9, 0.15 × min(总次数, 6))
+confidence   = base × max(stability, 0.2)
+```
+
+逻辑解释：
+
+- 样本越少，上限越低；
+- 结果摇摆不定 → 稳定性趋近 0 → 置信度被大幅压低；
+- 用 `max(stability, 0.2)` 兜底，**极差经验不会彻底归零**，保留微弱权重以防极端偏差。
+
+实例：`confidence(6 胜 0 负) = 0.90`，`confidence(3 胜 3 负) = 0.18`，`confidence(1 胜 0 负) = 0.15`。
+
+> ⚠️ 与设计初稿的差异：初稿写作 `stability = 1 − 2 × |success_rate − 0.5|`。该式**方向相反**——全胜时算出 stability = 0，会把最可靠的经验打到最低置信度。**实现采用 `2 × |…|`**。此处记录差异。
+
+### 7.5 经验准入规则
+
+- 单条置信度 < **0.2** 直接过滤，不进入候选；
+- 候选里最高置信度 < **0.3** 时整块不注入；
+- 原则：**宁可无参考，绝不提供弱证据干扰决策。**
+
+---
+
+## 八、安全、可控、兼容设计
+
+### 8.1 故障静默降级
+
+模块任何异常（检索报错、数据库异常、计算报错、解释器缺失）一律**静默失败、不阻断主流程**，主 Agent 完全不受影响，仅留日志。这条有专门的验收测试覆盖：SQLite 不可用、Retriever 抛错、StateEncoder 抛错、ValueEngine 抛错、CLI 返回非 JSON——全部降级为"不注入"。
+
+### 8.2 三段式开关（核心可控）
+
+| 模式 | 记录经验 | 影响模型 |
+| --- | --- | --- |
+| `off`（默认） | 否 | 否——原生 Agent 行为完全不变 |
+| `shadow` | 是 | 否——默默记录、计算奖惩、积累数据（用于对照实验） |
+| `active` | 是 | 是——经验参与辅助决策 |
+
+`shadow` 已验证**零副作用**（见第九节噪声底）。
+
+### 8.3 低侵入设计
+
+仅在 Agent 主循环插入**两个点位**：
+
+1. **推理前**：读取经验；
+2. **执行后**：写入经验结果。
+
+不重构、不侵入原有核心逻辑。三个接口 `pre-llm` / `post-action` / `context` 全部是 JSON 进出，宿主只需实现一层薄桥接。
+
+### 8.4 强约束
+
+所有注入必须携带声明：**仅供参考，模型自主独立判断，不强制遵从**。
+
+---
+
+## 九、效果验证：实测结果（不美化）
+
+### 9.1 三组对照 → 实际做成四臂
+
+| 臂 | 含义 |
+| --- | --- |
+| `off` (A) | Baseline，原生行为 |
+| `off-repeat` | 同一 `off` 模式再跑一遍，用于量化**采样噪声底** |
+| `shadow` (B) | 仅记录不生效 |
+| `active` (C) | 完整功能 |
+
+16 个固定任务 × 4 臂 = **64 次真实运行**，全部正常结束，无崩溃。
+
+### 9.2 核心观测指标
+
+| 指标 | off (A) | shadow (B) | active (C) | C 相对 A |
+| --- | --- | --- | --- | --- |
+| 任务成功率 | 100% | 100% | 100% | 0.0 pp |
+| 平均工具调用次数 | 8.63 | 8.44 | 8.44 | 2.2% 更少 |
+| 平均 Token 消耗 | 68 861 | 69 013 | 70 153 | **1.9% 更多** |
+| **重复犯错率**（含夹具种子） | 84.4% | 75.8% | 83.3% | **1.2% 更低** |
+| **重复犯错率**（仅模型步骤） | 68.8% | 64.7% | 78.6% | **−14.3%（更差）** |
+| 修复速度（步） | 1.00 | 1.13 | 1.06 | 更慢 |
+| 修复引发二次问题率 | 6.3% | 12.5% | 6.3% | 持平 |
+
+**A vs B**：54 处字段差异，同一 `off` 模式重跑的噪声底是 **58 处**——记录经验确实零副作用。
+**A vs C**：改善 1.2%（含种子）/ −14.3%（仅模型步骤），**两者都远低于 10% 门槛**。
+
+### 9.3 判定标准（如实执行）
+
+> **若 Active 组重复犯错率无显著下降，如实判定：模块暂未产生有效价值，不美化数据。**
+
+按此标准：**本模块尚未证明有效。** 唯一"变好"的 1.2% 落在 6% 噪声底之内，而剔除夹具种子后方向反转为更差；Token 反而增加 1.9%。
+
+### 9.4 为什么没测出效果（诚实归因）
+
+1. **任务太容易**：16 个任务均为单 bug 小工作区，A 组本身 100% 解出、平均 8.6 次调用，没有留给经验去省的空间。
+2. **重复犯错是跨任务长尾**：唯一对模块有利的指标，要求同一失败在后续任务中再现，而这批任务彼此独立、失败种类仅 5 类。
+3. **实测：模型完全不引用经验块**：10 个真实会话里，模型从未提及注入的历史经验。
+4. **两个已知设计缺陷**（留待后续评估，未擅自改动）：
+   - **检索只按失败类型选行**，导致同一个动作可能同时出现在同一块的"成功做法"和"避免做法"两组里，建议互相矛盾；
+   - **Reward 衡量的是"这一步是否推进了任务"，而非"这个动作是否合理"**，于是 `run_test` 这类必要动作会被打负分并被建议避免。
+
+**结论**：机制**已实现且安全**，但**没有证明能收回成本**。默认 `off`；`shadow` 可安全用于采集数据。
+
+---
+
+## 十、模块最终总结
+
+本模块是一套轻量、可迭代、永不炸上下文、低侵入、高可控的 Coding Agent 经验自迭代层。
+
+- 不训练大模型、无算力暴力开销；
+- 不做复杂强化学习、无收敛压力；
+- 不模拟生物意识、不制造自主智能；
+- 只做一件事：**沉淀项目专属经验、自动避坑，让 Agent 越用越熟练**。
+
+---
+
+## 快速开始
+
+需要 Python 3.11+（仅标准库）与 SQLite。
 
 ```sh
-git clone https://github.com/xijiahe172-art/mushroom-body-learning-module.git
-cd mushroom-body-learning-module/learning_module
+git clone https://github.com/xijiahe172-art/mushroom-body-learning.git
+cd mushroom-body-learning/learning_module
 
-# Create the store and see the resolved configuration.
-DSH_LEARNING_MODULE=off python cli.py config
-DSH_LEARNING_MODULE=shadow python cli.py init-db
+DSH_LEARNING_MODULE=off    python cli.py config      # 查看解析后的配置
+DSH_LEARNING_MODULE=shadow python cli.py init-db     # 建库
 
-# Run the test suite.
-python -m pytest tests -q
+python -m pytest tests -q                            # 181 项测试
 ```
 
-The module talks JSON over stdin/stdout, so it can be driven by hand:
-
-```sh
-# Capture the state before a model call.
-echo '{"hook":"pre-llm","sessionId":"s1","turn":1,"step":1,
-       "toolNames":["read","pwsh"],"fileTargets":[{"name":"read","parameters":["file_path"]}],
-       "priorResults":[]}' | DSH_LEARNING_MODULE=shadow python cli.py hook
-
-# Record what the step's calls settled to.
-echo '{"hook":"post-action","sessionId":"s1","turn":1,"step":1,
-       "results":[{"callId":"c1","name":"pwsh","isError":true,
-                   "text":"1 failed, 2 passed in 0.10s",
-                   "arguments":{"command":"python -m pytest -q"},"mutates":false}]}' \
-  | DSH_LEARNING_MODULE=shadow DSH_LEARNING_DB=experiences.db python cli.py hook
-
-# Inspect what a state would retrieve, without injecting anything.
-python explain_retrieval.py experiences.db --all
-
-# List the rows the anti-cheating layer flagged for a human.
-python cli.py flagged
-```
-
-### Environment variables
-
-| Variable | Default | Meaning |
+| 环境变量 | 默认 | 含义 |
 | --- | --- | --- |
-| `DSH_LEARNING_MODULE` | `off` | Mode: `off`, `shadow`, or `active`. Any other value is reported and treated as `off`. |
-| `DSH_LEARNING_DB` | `~/.dsh/learning/experiences.db` | SQLite store path. |
-| `DSH_LEARNING_MODULE_HOME` | the module directory | For out-of-tree installs. |
-| `DSH_LEARNING_PYTHON` | `python` (Windows) / `python3` | Interpreter the bridge invokes. |
+| `DSH_LEARNING_MODULE` | `off` | 模式：`off` / `shadow` / `active`；其他值会被报告并按 `off` 处理 |
+| `DSH_LEARNING_DB` | `~/.dsh/learning/experiences.db` | SQLite 库路径 |
+| `DSH_LEARNING_MODULE_HOME` | 模块目录 | 供外置安装使用 |
+| `DSH_LEARNING_PYTHON` | `python`（Windows）/ `python3` | 桥接层调用的解释器 |
 
-### Modes
+**接入其他 Agent Loop**：模块只暴露两个钩子（推理前 / 执行后）加一个检索查询，宿主要自己实现一层桥接并负责"故障不可阻断主流程"。参考实现见
+[`integrations/deepseek-harness/learning-bridge.ts`](integrations/deepseek-harness/learning-bridge.ts)——那是**针对 DeepSeek Harness 的具体集成**，不是通用适配层。
 
-| Mode | Records experience | Influences the model |
-| --- | --- | --- |
-| `off` | no | no |
-| `shadow` | yes | no |
-| `active` | yes | yes — injects the reference block |
+## 文档索引
 
-## Integrating with another agent loop
-
-The module's interface is deliberately two calls plus one query, so a new host
-only has to implement a small bridge:
-
-| Call | When | What it must carry |
-| --- | --- | --- |
-| `pre-llm` hook | after the request is composed, before it streams | session/turn/step, the tools the request offers, their declared file arguments, and the **previous** settled step's results |
-| `post-action` hook | after every tool call of a step has settled | the step's calls with name, arguments, `isError`, result text, and whether the call mutates its file arguments |
-| `context` query | during prompt assembly, in `active` mode only | the same state payload as the pre-LLM hook |
-
-A bridge must also own the fail-silent rule: the module may never fail a turn, so
-a missing interpreter, a non-zero exit, or unparseable output must all degrade to
-"no injection" plus a diagnostic.
-
-[`integrations/deepseek-harness/learning-bridge.ts`](integrations/deepseek-harness/learning-bridge.ts)
-is the reference implementation of exactly that, for **DeepSeek Harness**. Read
-it as a worked example of the three calls, the token budget, and the failure
-containment — it is not a generic adapter layer, and it is not part of this
-module's public interface. See that directory's README for the specifics and the
-caveats.
-
-## Documentation
-
-| File | Contents |
+| 文件 | 内容 |
 | --- | --- |
-| [`MODULE.md`](learning_module/MODULE.md) | The module's own reference: schema, retrieval and value formulas, the injected format, and the anti-cheating rules. |
-| [`FINAL_REPORT.md`](learning_module/FINAL_REPORT.md) | Five-phase summary: per-phase test results, benchmark data, and the recommendation on enabling `active`. |
-| [`PHASE3_ACCEPTANCE.md`](learning_module/PHASE3_ACCEPTANCE.md) | What injection actually looked like in ten real active-mode sessions. |
-| [`PHASE4_ACCEPTANCE.md`](learning_module/PHASE4_ACCEPTANCE.md) | The anti-cheating layer, its acceptance criteria, and the defects found while building it. |
-| [`PHASE5_BENCHMARK.md`](learning_module/PHASE5_BENCHMARK.md) | The 64-run benchmark: six metrics per arm, the noise floor, and per-task tables. |
+| [`learning_module/MODULE.md`](learning_module/MODULE.md) | 模块参考：表结构、检索与价值公式、注入格式、防作弊规则 |
+| [`learning_module/FINAL_REPORT.md`](learning_module/FINAL_REPORT.md) | 五阶段总结：各阶段测试结果、benchmark 数据、启用建议 |
+| [`learning_module/PHASE3_ACCEPTANCE.md`](learning_module/PHASE3_ACCEPTANCE.md) | 注入在 10 个真实会话中的实际样子 |
+| [`learning_module/PHASE4_ACCEPTANCE.md`](learning_module/PHASE4_ACCEPTANCE.md) | 防作弊层、验收标准与其间发现的缺陷 |
+| [`learning_module/PHASE5_BENCHMARK.md`](learning_module/PHASE5_BENCHMARK.md) | 64 次运行：六项指标、噪声底、逐任务表 |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — 见 [LICENSE](LICENSE)。
 
-The DeepSeek Harness excerpt under `integrations/` is a copy of code from that
-project and carries its own license; it is included only as an integration
-reference.
+`integrations/` 下的 DeepSeek Harness 代码摘录来自该项目，遵循其自身许可，此处仅作集成参考。
+
+---
+
+*（注：本文档部分内容由 AI 协作撰写。）*
