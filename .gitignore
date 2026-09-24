@@ -1,0 +1,35 @@
+# Local artifacts and secrets — never publish
+
+# Credentials
+.env
+.env.*
+*.key
+*.pem
+credentials*.json
+credentials*.yaml
+
+# The experience store and anything SQLite produces
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Session logs and exports
+*.jsonl
+*.jsonl.zstd
+.sessions/
+storages/
+
+# Hallucination-free scratch: benchmark/report scratch dirs and temp files
+scratch/
+*.tmp
+*.out
+*.err
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
